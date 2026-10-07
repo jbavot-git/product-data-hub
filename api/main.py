@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 import psycopg
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/products"
@@ -31,6 +32,19 @@ async def lifespan(app: FastAPI):
                 category   TEXT,
                 stock      INTEGER NOT NULL CHECK (stock >= 0),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        # Historique des imports CSV
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS imports (
+                id          SERIAL PRIMARY KEY,
+                filename    TEXT,
+                imported    INTEGER NOT NULL,
+                rejected    INTEGER NOT NULL,
+                errors      JSONB NOT NULL DEFAULT '[]',
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
@@ -142,8 +156,57 @@ async def import_products(file: UploadFile = File(...)):
                 """,
                 valid,
             )
+        # Même transaction que l'upsert : l'historique reflète ce qui a été écrit
+        import_row = conn.execute(
+            """
+            INSERT INTO imports (filename, imported, rejected, errors)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (file.filename, len(valid), len(rejected), Jsonb(rejected)),
+        ).fetchone()
 
-    return {"imported": len(valid), "rejected": len(rejected), "errors": rejected}
+    return {
+        "id": import_row["id"],
+        "created_at": import_row["created_at"],
+        "imported": len(valid),
+        "rejected": len(rejected),
+        "errors": rejected,
+    }
+
+
+@app.get("/imports")
+def list_imports():
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, filename, imported, rejected, created_at
+            FROM imports
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return rows
+
+
+@app.get("/imports/{import_id}")
+def get_import(import_id: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM imports WHERE id = %s", (import_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} introuvable")
+    return row
+
+
+@app.get("/imports/{import_id}/rejects")
+def list_import_rejects(import_id: int):
+    """Lignes rejetées d'un lot, avec leur motif."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT errors FROM imports WHERE id = %s", (import_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} introuvable")
+    return sorted(row["errors"], key=lambda reject: reject["line"])
 
 
 @app.get("/products")
