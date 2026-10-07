@@ -1,0 +1,8 @@
+sku,name,price,category,stock
+TSHIRT-001,T-shirt running,19.90,Vêtements,120
+SHOE-204,Chaussures trail,89.00,Chaussures,35
+BALL-010,Ballon football,,Ballons,50
+TENT-330,Tente 2 places,129.90,Camping,
+-4
+SHOE-204,Chaussures trail (doublon),89.00,Chaussures,35
+BIKE-777,Casque vélo,45.50,Cyclisme,60
